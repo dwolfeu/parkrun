@@ -13,3 +13,8 @@ obj/
 data/*.html
 data/events_*/
 
+## Persisted scrape data — contains runner/volunteer PII (names, parkrun IDs); keep out of git
+data/history.json
+data/milestones.json
+data/volunteers.json
+

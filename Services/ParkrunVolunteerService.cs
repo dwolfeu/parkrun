@@ -63,41 +63,19 @@ public class ParkrunVolunteerService
         }
 
         // 1. Scrape volunteer rosters across all attended events for this week
+        int total = eventResultUrls.Count;
+        int index = 0, fetchedCount = 0, cachedCount = 0, blockedCount = 0;
+        ParkrunFetchHelper.LogPassStart("Volunteer rosters", eventResultUrls, cacheBaseDir);
         foreach (var kvp in eventResultUrls)
         {
+            index++;
             string eventName = kvp.Key;
-            string eventUrl = kvp.Value;
-            if (!eventUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !eventUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                eventUrl = "https://www.parkrun.org.uk" + (eventUrl.StartsWith("/") ? "" : "/") + eventUrl;
-            }
+            var (eventUrl, cachePath) = ParkrunFetchHelper.ResolveEvent(cacheBaseDir, eventName, kvp.Value);
 
-            var mUrl = Regex.Match(eventUrl, @"parkrun\.[a-z\.]+/([^/]+)/results/(\d+)");
-            string slug = mUrl.Success ? mUrl.Groups[1].Value : Regex.Replace(eventName, @"[^a-zA-Z0-9]", "_").ToLowerInvariant();
-            string num = mUrl.Success ? mUrl.Groups[2].Value : "latest";
-            string cachePath = Path.Combine(cacheBaseDir, $"{slug}_{num}.html");
-
-            string eventHtml = "";
-            if (File.Exists(cachePath))
-            {
-                eventHtml = await File.ReadAllTextAsync(cachePath);
-            }
-            else
-            {
-                try
-                {
-                    eventHtml = await _httpClient.GetStringAsync(eventUrl);
-                    if (!string.IsNullOrEmpty(eventHtml) && !eventHtml.Contains("Amazon WAF", StringComparison.OrdinalIgnoreCase))
-                    {
-                        await File.WriteAllTextAsync(cachePath, eventHtml);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Warning] Failed to fetch event results for {eventName}: {ex.Message}");
-                    continue;
-                }
-            }
+            var (eventHtml, outcome) = await ParkrunFetchHelper.GetEventHtmlAsync(_httpClient, eventName, eventUrl, cachePath, index, total);
+            if (outcome == EventFetchOutcome.FromCache) cachedCount++;
+            else if (outcome == EventFetchOutcome.Downloaded) fetchedCount++;
+            else blockedCount++;
 
             if (string.IsNullOrEmpty(eventHtml)) continue;
 
@@ -107,7 +85,10 @@ public class ParkrunVolunteerService
             {
                 string rContent = row.Groups[1].Value;
                 var clubMatch = Regex.Match(rContent, @"data-club=[\x27\x22]([^\x27\x22]*)[\x27\x22]", RegexOptions.IgnoreCase);
-                string club = clubMatch.Success ? clubMatch.Groups[1].Value.Trim() : "";
+                // data-club comes straight from raw HTML, so it is still entity-encoded
+                // (e.g. "Flag &amp; Pole Runners"). Decode it before comparing against the
+                // already-decoded club name, otherwise names containing &, ', etc. never match.
+                string club = clubMatch.Success ? System.Net.WebUtility.HtmlDecode(clubMatch.Groups[1].Value).Trim() : "";
 
                 bool isClubMember = false;
                 if (!string.IsNullOrEmpty(club))
@@ -152,6 +133,8 @@ public class ParkrunVolunteerService
                 }
             }
         }
+
+        ParkrunFetchHelper.LogPassSummary("Volunteer rosters", fetchedCount, cachedCount, blockedCount);
 
         // 2. Fetch or load detailed volunteer profiles for each active volunteer
         var resultProfiles = new List<ParkrunVolunteerProfile>();

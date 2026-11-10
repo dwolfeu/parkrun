@@ -72,6 +72,18 @@ class Program
             {
                 customOutput = args[++i];
             }
+            else if ((arg.Equals("--delay", StringComparison.OrdinalIgnoreCase) || arg.Equals("-w", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+            {
+                string delayArg = args[++i];
+                if (double.TryParse(delayArg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double delaySeconds) && delaySeconds >= 0)
+                {
+                    ParkrunFetchHelper.RequestDelayMs = (int)Math.Round(delaySeconds * 1000);
+                }
+                else
+                {
+                    Console.WriteLine($"[Warning] Invalid --delay value '{delayArg}'; using {ParkrunFetchHelper.RequestDelayMs / 1000.0:0.##}s.");
+                }
+            }
             else if (!arg.StartsWith("-"))
             {
                 clubInput = arg;
@@ -86,6 +98,8 @@ class Program
             eventDate = mostRecentSaturday.ToString("yyyy-MM-dd");
         }
 
+        Console.WriteLine($"[Info] Per-event request spacing: {ParkrunFetchHelper.RequestDelayMs / 1000.0:0.##}s (override with --delay <seconds>)");
+
         var scraperService = new ParkrunScraperService();
         string requestUrl = scraperService.BuildUrl(clubInput, eventDate);
 
@@ -97,6 +111,9 @@ class Program
 
             string effectiveClubName = !string.IsNullOrEmpty(meta.ClubName) ? meta.ClubName : defaultClubName;
             string effectiveDate = !string.IsNullOrEmpty(meta.EventDate) ? meta.EventDate : (eventDate ?? DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            // Pin the report date to the requested date so an empty/unparsed report never
+            // silently falls back to today's date in the PDF.
+            meta.EventDate = effectiveDate;
             int totalRunners = records.Count;
             int totalEvents = records.Select(r => r.EventName).Distinct().Count();
             int totalMembers = int.TryParse(meta.TotalMembers, out int tm) ? tm : 0;
@@ -107,6 +124,15 @@ class Program
             Console.WriteLine($"Total Club Runners on Date:      {totalRunners}");
             Console.WriteLine($"Distinct Events Attended:        {totalEvents:N0}");
             Console.WriteLine($"Total Runner Records Parsed:     {records.Count:N0}\n");
+
+            // No participants => parkrun has no results for this club/date. Don't emit a
+            // misleading empty PDF; tell the user clearly and stop here.
+            if (records.Count == 0)
+            {
+                Console.WriteLine($"[Warning] parkrun has no results for this club/date combination ({effectiveClubName}, {effectiveDate}).");
+                Console.WriteLine("          Nothing to report — skipping PDF generation. Try a date when the club had participants (parkruns are on Saturdays).");
+                return 0;
+            }
 
             // Save Snapshot into History
             var historyService = new ParkrunHistoryService();

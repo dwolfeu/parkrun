@@ -60,41 +60,19 @@ public class ParkrunMilestoneService
         // 1. Gather all event result HTMLs and extract runner row attributes
         var runnerEventMap = new Dictionary<string, (int Runs, int Vols, string AgeGroup, string Achievement, bool IsPb, bool IsFirstTimer)>();
 
+        int total = meta.EventResultUrls.Count;
+        int index = 0, fetchedCount = 0, cachedCount = 0, blockedCount = 0;
+        ParkrunFetchHelper.LogPassStart("Milestone analysis", meta.EventResultUrls, cacheBaseDir);
         foreach (var kvp in meta.EventResultUrls)
         {
+            index++;
             string eventName = kvp.Key;
-            string eventUrl = kvp.Value;
-            if (!eventUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !eventUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                eventUrl = "https://www.parkrun.org.uk" + (eventUrl.StartsWith("/") ? "" : "/") + eventUrl;
-            }
+            var (eventUrl, cachePath) = ParkrunFetchHelper.ResolveEvent(cacheBaseDir, eventName, kvp.Value);
 
-            var mUrl = Regex.Match(eventUrl, @"parkrun\.[a-z\.]+/([^/]+)/results/(\d+)");
-            string slug = mUrl.Success ? mUrl.Groups[1].Value : Regex.Replace(eventName, @"[^a-zA-Z0-9]", "_").ToLowerInvariant();
-            string num = mUrl.Success ? mUrl.Groups[2].Value : "latest";
-            string cachePath = Path.Combine(cacheBaseDir, $"{slug}_{num}.html");
-
-            string eventHtml = "";
-            if (File.Exists(cachePath))
-            {
-                eventHtml = await File.ReadAllTextAsync(cachePath);
-            }
-            else
-            {
-                try
-                {
-                    eventHtml = await _httpClient.GetStringAsync(eventUrl);
-                    if (!string.IsNullOrEmpty(eventHtml) && !eventHtml.Contains("Amazon WAF", StringComparison.OrdinalIgnoreCase))
-                    {
-                        await File.WriteAllTextAsync(cachePath, eventHtml);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Warning] Failed to fetch event results for {eventName}: {ex.Message}");
-                    continue;
-                }
-            }
+            var (eventHtml, outcome) = await ParkrunFetchHelper.GetEventHtmlAsync(_httpClient, eventName, eventUrl, cachePath, index, total);
+            if (outcome == EventFetchOutcome.FromCache) cachedCount++;
+            else if (outcome == EventFetchOutcome.Downloaded) fetchedCount++;
+            else blockedCount++;
 
             if (string.IsNullOrEmpty(eventHtml)) continue;
 
@@ -126,6 +104,8 @@ public class ParkrunMilestoneService
                 runnerEventMap[pId] = (runs, vols, ageGroup, achievement, isPb, isFirstTimer);
             }
         }
+
+        ParkrunFetchHelper.LogPassSummary("Milestone analysis", fetchedCount, cachedCount, blockedCount);
 
         // 2. Enrich records & identify running milestones
         var milestones = new List<ParkrunMilestone>();

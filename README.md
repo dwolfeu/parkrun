@@ -1,6 +1,6 @@
-# Parkrun Consolidated Club Results Scraper (.NET 9 / C#)
+# Parkrun Consolidated Club Results Scraper (.NET 10 / C#)
 
-A C# .NET 9 console application that scrapes and extracts **Parkrun Consolidated Club Results** across all worldwide parkrun events for **Birmingham Swifts (Club #21925)** (or any other club) and automatically generates a styled **PDF report** directly in your `~/Downloads` folder.
+A C# .NET console application that scrapes and extracts **Parkrun Consolidated Club Results** across all worldwide parkrun events for **Birmingham Swifts (Club #21925)** (or any other club) and automatically generates a styled **PDF report** directly in your `~/Downloads` folder.
 
 ---
 
@@ -23,28 +23,37 @@ A C# .NET 9 console application that scrapes and extracts **Parkrun Consolidated
 - **Clean 2-Page Standard Report**:
   - **Page 1**: Weekly Milestones Section (when milestones occur), followed by Club Runners Table with enlarged typography (13pt headers, 13pt pos, 13pt runner, 13pt time, 15pt finishers, 11.5pt event) and milestone badges. Interactive hyperlinks on runner names.
   - **Page 2**: Taller Weekly Trends Graph, Weekly Volunteers Table (13pt/15pt typography), and Celebrating Our Volunteers appreciation banner (13pt).
-- **Fast & Modern**: Built on .NET 9, `HtmlAgilityPack`, `QuestPDF`, and `ScottPlot`.
+- **Resilient, Resumable Scraping**:
+  - Per-event results pages sit behind AWS WAF, which serves a CAPTCHA challenge (returned as HTTP `405`) when it detects a burst of automated requests. The scraper spaces requests out (configurable, default **5s**) and retries with backoff to stay under that threshold.
+  - Every successfully fetched page is cached under `data/events_<date>/`, so interrupted or partially-blocked runs are **resumable**: re-running the same command re-reads cached events instantly and only re-fetches the ones still missing.
+- **Fast & Modern**: Built on .NET 10, `HtmlAgilityPack`, `QuestPDF`, and `ScottPlot`.
 
 ---
 
+## Requirements
+
+- **.NET 10 SDK** (on macOS: `brew install dotnet`). The project targets `net10.0`.
+
 ## Quick Start
 
-### 1. Run with default configuration (Generates PDF for Birmingham Swifts):
+Run with no arguments to use the defaults from [appsettings.json](appsettings.json), or combine any of the flags below. Everything after `--` is passed to the app:
+
 ```bash
-dotnet run --project /Users/bowang/.gemini/antigravity-ide/scratch/parkrun-scraper
+dotnet run --project ParkrunScraper.csproj -- --club 50750 --date 2026-10-31 --delay 5 --output ~/Downloads/report.pdf
 ```
 
-### 2. Specifying a Different Club ID or URL:
-Pass another club's numerical ID or full URL with `-c` or `--club`:
-```bash
-dotnet run --project /Users/bowang/.gemini/antigravity-ide/scratch/parkrun-scraper -- --club 21925
-```
+All flags are optional:
 
-### 3. Specifying a Historical Date:
-Extract results for a specific weekend event date (`YYYY-MM-DD`):
-```bash
-dotnet run --project /Users/bowang/.gemini/antigravity-ide/scratch/parkrun-scraper -- --date 2026-08-22
-```
+| Flag | Alias | Description | Default |
+| --- | --- | --- | --- |
+| `--club` | `-c` | Club numerical ID or full consolidated-club URL | `DefaultClubNum` from config (`50750`) |
+| `--date` | `-d` | Event date (`YYYY-MM-DD`) | Most recent Saturday |
+| `--delay` | `-w` | Spacing between per-event requests, in seconds (accepts decimals) — raise it if you hit `405` CAPTCHA blocks | `5` |
+| `--output` | `-o` | Explicit output PDF path | `~/Downloads/parkrun_<club>_<date>.pdf` |
+
+The request spacing can also be set via the `PARKRUN_REQUEST_DELAY_MS` environment variable (in **milliseconds**); the `--delay` flag takes precedence. The active spacing is printed at startup.
+
+> **Note:** The PDF filename is deterministic for a given club and date, so re-running **overwrites** the previous PDF. Pass `--output` (or move the file first) to keep an earlier copy. The underlying HTML cache in `data/events_<date>/` is never overwritten, so re-runs only fetch events still missing.
 
 ---
 
@@ -53,22 +62,11 @@ dotnet run --project /Users/bowang/.gemini/antigravity-ide/scratch/parkrun-scrap
 Pre-configured for Birmingham Swifts in [appsettings.json](appsettings.json):
 ```json
 {
-  "DefaultClubNum": "21925",
-  "DefaultClubName": "Birmingham Swifts",
+  "DefaultClubNum": "50750",
+  "DefaultClubName": "Flag & Pole Runners",
   "DownloadFolder": "~/Downloads",
   "OutputFilenamePattern": "parkrun_{0}_{1}.pdf",
   "SingleOutputFilename": "parkrun_club_results.pdf",
   "OverwriteSingleFile": false
 }
-```
-
----
-
-## Pushing to GitHub as an Independent Repository
-
-This project is configured as its own independent Git repository. To push to GitHub:
-
-```bash
-cd /Users/bowang/.gemini/antigravity-ide/scratch/parkrun-scraper
-git push origin main
 ```

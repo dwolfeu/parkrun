@@ -36,6 +36,7 @@ public class ParkrunPdfGenerator
         string eventDate = !string.IsNullOrEmpty(meta.EventDate) ? meta.EventDate : DateTime.UtcNow.ToString("yyyy-MM-dd");
         int totalRunners = records.Count;
         int totalEvents = records.Select(r => r.EventName).Distinct().Count();
+        int totalVolunteers = volunteerProfiles?.Count ?? 0;
 
         // Check for club logo image
         string logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "birmingham_swifts_logo.jpg");
@@ -85,7 +86,7 @@ public class ParkrunPdfGenerator
                                 .Bold()
                                 .FontColor(Colors.Grey.Darken3);
 
-                            dateCol.Item().AlignRight().Text($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm}")
+                            dateCol.Item().AlignRight().Text($"Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC")
                                 .FontSize(8)
                                 .FontColor(Colors.Grey.Medium);
                         });
@@ -117,6 +118,13 @@ public class ParkrunPdfGenerator
                             string memberStr = string.IsNullOrEmpty(meta.TotalMembers) ? "N/A" : meta.TotalMembers;
                             c.Item().Text(memberStr).FontSize(13).Bold().FontColor(Colors.Orange.Darken4);
                         });
+
+                        // Card 4: Volunteers This Week
+                        statRow.RelativeItem().Background(Colors.Purple.Lighten5).Border(1).BorderColor(Colors.Purple.Lighten3).Padding(5).Column(c =>
+                        {
+                            c.Item().Text("Club Volunteers").FontSize(7.5f).FontColor(Colors.Purple.Darken2).SemiBold();
+                            c.Item().Text($"{totalVolunteers}").FontSize(13).Bold().FontColor(Colors.Purple.Darken4);
+                        });
                     });
 
                     column.Item().PaddingTop(1).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
@@ -139,7 +147,7 @@ public class ParkrunPdfGenerator
                                 {
                                     t.Span("🎉 ").FontSize(12f);
                                     t.Span("Club Milestones This Week: ").FontSize(11.5f).Bold().FontColor(Colors.Pink.Darken3);
-                                    t.Span($"Celebrating {milestones.Count} Birmingham Swifts milestone achievement{(milestones.Count > 1 ? "s" : "")} this weekend!").FontSize(9f).FontColor(Colors.Grey.Darken2);
+                                    t.Span($"Celebrating {milestones.Count} {clubName} milestone achievement{(milestones.Count > 1 ? "s" : "")} this weekend!").FontSize(9f).FontColor(Colors.Grey.Darken2);
                                 });
                             });
 
@@ -364,7 +372,7 @@ public class ParkrunPdfGenerator
                                         r.AutoItem().Text("Club Volunteers This Week & Community Champions")
                                             .FontSize(11f).Bold().FontColor(Colors.Purple.Darken3);
                                     });
-                                    vc.Item().PaddingTop(1).Text($"Celebrating {totalWeeklyVolunteers} Birmingham Swifts members who volunteered at parkrun events this weekend ({eventDate}).")
+                                    vc.Item().PaddingTop(1).Text($"Celebrating {totalWeeklyVolunteers} {clubName} members who volunteered at parkrun events this weekend ({eventDate}).")
                                         .FontSize(8f).FontColor(Colors.Grey.Darken1);
                                 });
                             });
@@ -486,7 +494,7 @@ public class ParkrunPdfGenerator
                                 banner.RelativeItem().Text(t =>
                                 {
                                     t.Span("Celebrating Our Volunteers: ").FontSize(13f).Bold().FontColor(Colors.Purple.Darken3);
-                                    t.Span("Every parkrun event is 100% volunteer-led. Huge thanks to all Birmingham Swifts members who volunteered their time to support the running community this weekend! If you would like to help at an upcoming event, chat with our club team or sign up on your local parkrun roster.").FontSize(13f).FontColor(Colors.Purple.Darken4);
+                                    t.Span($"Every parkrun event is 100% volunteer-led. Huge thanks to all {clubName} members who volunteered their time to support the running community this weekend! If you would like to help at an upcoming event, chat with our club team or sign up on your local parkrun roster.").FontSize(13f).FontColor(Colors.Purple.Darken4);
                                 });
                             });
                         }
@@ -504,7 +512,7 @@ public class ParkrunPdfGenerator
                                         r.AutoItem().Text("Club Volunteers & Community Champions")
                                             .FontSize(11f).Bold().FontColor(Colors.Purple.Darken3);
                                     });
-                                    vc.Item().PaddingTop(1).Text($"Celebrating Birmingham Swifts members who volunteer and support the parkrun community ({eventDate}).")
+                                    vc.Item().PaddingTop(1).Text($"Celebrating {clubName} members who volunteer and support the parkrun community ({eventDate}).")
                                         .FontSize(8f).FontColor(Colors.Grey.Darken1);
                                 });
                             });
