@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -16,13 +17,17 @@ public class ParkrunScraperService
 
     public ParkrunScraperService(HttpClient? httpClient = null)
     {
-        _httpClient = httpClient ?? new HttpClient(new HttpClientHandler
+        // A caller-supplied client (the shared, WAF-token-aware one from Program) is already
+        // configured; only self-built clients need the default headers, and setting them on a
+        // shared client would duplicate the headers once per service.
+        if (httpClient != null)
         {
-            AllowAutoRedirect = true
-        });
+            _httpClient = httpClient;
+            return;
+        }
 
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+        _httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(ParkrunHttpClient.DefaultUserAgent);
         _httpClient.DefaultRequestHeaders.Accept.ParseAdd(
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
         _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
@@ -79,29 +84,13 @@ public class ParkrunScraperService
             string url = BuildUrl(clubNumOrUrl, eventDate);
             try
             {
-                html = await _httpClient.GetStringAsync(url);
-                if (html.Contains("Amazon WAF", StringComparison.OrdinalIgnoreCase) ||
-                    html.Contains("x-amzn-waf", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (File.Exists(cachePath))
-                    {
-                        Console.WriteLine($"[Warning] Parkrun WAF captcha encountered; falling back to cached file: {cachePath}");
-                        html = await File.ReadAllTextAsync(cachePath);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException("Parkrun WAF captcha encountered and no local cached report exists.");
-                    }
-                }
-                else
-                {
-                    // Cache the successful download
-                    await File.WriteAllTextAsync(cachePath, html);
-                }
+                html = await FetchReportHtmlAsync(url, cachePath);
             }
             catch (Exception ex) when (File.Exists(cachePath))
             {
-                Console.WriteLine($"[Warning] Network request failed ({ex.Message}); falling back to cached file: {cachePath}");
+                // WAF block (after a token was tried) or a network error, with a cache to fall
+                // back on — reuse it rather than failing the run.
+                Console.WriteLine($"[Warning] {ex.Message} Falling back to cached file: {cachePath}");
                 html = await File.ReadAllTextAsync(cachePath);
             }
         }
@@ -226,6 +215,46 @@ public class ParkrunScraperService
         }
 
         return (meta, records);
+    }
+
+    /// <summary>
+    /// Fetches the consolidated club report, caching a successful download. On a WAF CAPTCHA
+    /// (either a challenge page or an HTTP 405) it tries once to obtain/reuse a token for the
+    /// report's host and retries; if it still can't get past, it throws so the caller can fall
+    /// back to any cached copy.
+    /// </summary>
+    private async Task<string> FetchReportHtmlAsync(string url, string cachePath)
+    {
+        string host = Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host : "";
+
+        for (int attempt = 0; ; attempt++)
+        {
+            string html;
+            try
+            {
+                html = await _httpClient.GetStringAsync(url);
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.MethodNotAllowed)
+            {
+                if (attempt == 0 && ParkrunFetchHelper.TokenStore?.TryRefreshToken(host, url) == true)
+                {
+                    continue;
+                }
+                throw new InvalidOperationException("Parkrun WAF CAPTCHA (HTTP 405) on the club report.");
+            }
+
+            if (ParkrunFetchHelper.LooksLikeWafChallenge(html))
+            {
+                if (attempt == 0 && ParkrunFetchHelper.TokenStore?.TryRefreshToken(host, url) == true)
+                {
+                    continue;
+                }
+                throw new InvalidOperationException("Parkrun WAF CAPTCHA encountered on the club report.");
+            }
+
+            await File.WriteAllTextAsync(cachePath, html);
+            return html;
+        }
     }
 
     public static void SaveToCsv(List<ParkrunRecord> records, string outputPath)

@@ -41,6 +41,13 @@ public static class ParkrunFetchHelper
     /// </summary>
     public static int RequestDelayMs { get; set; } = ResolveDefaultDelayMs();
 
+    /// <summary>
+    /// Shared AWS WAF token store. When set, a WAF block prompts for (or reuses) a token
+    /// for the blocking host and retries with it before falling back to backoff. Left null
+    /// (e.g. in tests) the fetcher just uses its polite-backoff behavior.
+    /// </summary>
+    public static WafTokenStore? TokenStore { get; set; }
+
     private static int ResolveDefaultDelayMs()
     {
         const int fallback = 5000;
@@ -140,18 +147,21 @@ public static class ParkrunFetchHelper
     private static async Task<(string? Html, string? Error)> FetchEventHtmlAsync(HttpClient client, string url)
     {
         string? lastError = null;
-        int maxAttempts = RetryBackoffMs.Length + 1;
+        int maxAttempts = RetryBackoffMs.Length + 1; // hard cap of 3 live GETs per URL
+        string host = Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host : "";
 
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             // Space out live requests so we never look like a bot burst to the WAF.
             await Task.Delay(RequestDelayMs);
 
+            bool wafBlocked = false;
             try
             {
                 string html = await client.GetStringAsync(url);
                 if (LooksLikeWafChallenge(html))
                 {
+                    wafBlocked = true;
                     lastError = "AWS WAF CAPTCHA challenge page";
                 }
                 else
@@ -162,12 +172,21 @@ public static class ParkrunFetchHelper
             catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.MethodNotAllowed)
             {
                 // The telltale sign of the WAF CAPTCHA block — call it out explicitly.
+                wafBlocked = true;
                 lastError = "HTTP 405 (AWS WAF CAPTCHA block)";
             }
             catch (Exception ex)
             {
                 // e.g. a timeout surfaces as TaskCanceledException.
                 lastError = ex.Message;
+            }
+
+            // A WAF block won't clear by waiting — a fresh token is the real fix. Offer the
+            // token prompt first; if it yields one, retry straight away (skip the backoff).
+            // This uses one of the capped attempts, so the 3-GET ceiling still holds.
+            if (wafBlocked && host.Length > 0 && TokenStore?.TryRefreshToken(host, url) == true)
+            {
+                continue;
             }
 
             if (attempt < RetryBackoffMs.Length)

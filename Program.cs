@@ -57,6 +57,11 @@ class Program
         string? customOutput = null;
         bool singleFileFlag = overwriteSingleFile;
 
+        // AWS WAF token delegation: tokens are optional and default to data/waf-tokens.json.
+        string tokenFilePath = Path.Combine(Directory.GetCurrentDirectory(), "data", "waf-tokens.json");
+        var cliTokens = new List<(string Host, string Value)>();
+        string? cliUserAgent = null;
+
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -84,10 +89,44 @@ class Program
                     Console.WriteLine($"[Warning] Invalid --delay value '{delayArg}'; using {ParkrunFetchHelper.RequestDelayMs / 1000.0:0.##}s.");
                 }
             }
+            else if (arg.Equals("--token-file", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                tokenFilePath = ParkrunScraperService.ResolvePath(args[++i]);
+            }
+            else if (arg.Equals("--token", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                // Format: <host>=<token>. Split on the FIRST '=' only — the token value itself
+                // contains '=' (e.g. aws-waf-token=...).
+                string pair = args[++i];
+                int eq = pair.IndexOf('=');
+                if (eq > 0)
+                {
+                    cliTokens.Add((pair.Substring(0, eq).Trim(), pair.Substring(eq + 1)));
+                }
+                else
+                {
+                    Console.WriteLine($"[Warning] Ignoring --token '{pair}' — expected <host>=<token>, e.g. --token www.parkrun.com=aws-waf-token=...");
+                }
+            }
+            else if (arg.Equals("--user-agent", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                cliUserAgent = args[++i];
+            }
             else if (!arg.StartsWith("-"))
             {
                 clubInput = arg;
             }
+        }
+
+        // Build the WAF token store (file + CLI overrides) and the shared, token-aware HTTP client.
+        var tokenStore = WafTokenStore.Load(tokenFilePath);
+        foreach (var (host, value) in cliTokens) tokenStore.SetToken(host, value);
+        tokenStore.SetUserAgent(cliUserAgent);
+        ParkrunFetchHelper.TokenStore = tokenStore;
+        var httpClient = ParkrunHttpClient.Create(tokenStore);
+        if (tokenStore.Hosts.Count > 0)
+        {
+            Console.WriteLine($"[Info] WAF tokens pre-seeded for: {string.Join(", ", tokenStore.Hosts)}");
         }
 
         if (string.IsNullOrEmpty(eventDate))
@@ -100,7 +139,7 @@ class Program
 
         Console.WriteLine($"[Info] Per-event request spacing: {ParkrunFetchHelper.RequestDelayMs / 1000.0:0.##}s (override with --delay <seconds>)");
 
-        var scraperService = new ParkrunScraperService();
+        var scraperService = new ParkrunScraperService(httpClient);
         string requestUrl = scraperService.BuildUrl(clubInput, eventDate);
 
         Console.WriteLine($"Fetching consolidated club report from:\n  {requestUrl}\n");
@@ -155,7 +194,7 @@ class Program
 
             // Track Member Volunteering for this specific week across attended events
             Console.WriteLine("Fetching member volunteering for this specific week across attended events...");
-            var volunteerService = new ParkrunVolunteerService();
+            var volunteerService = new ParkrunVolunteerService(httpClient);
             var volunteerProfiles = await volunteerService.GetWeeklyEventVolunteersAsync(
                 meta.EventResultUrls,
                 effectiveClubName,
@@ -168,7 +207,7 @@ class Program
 
             // Track and detect weekly club milestones
             Console.WriteLine("Analyzing runner and volunteer milestones for this weekend...");
-            var milestoneService = new ParkrunMilestoneService();
+            var milestoneService = new ParkrunMilestoneService(httpClient);
             var milestones = await milestoneService.ProcessAndTrackMilestonesAsync(
                 meta,
                 records,

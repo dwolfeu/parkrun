@@ -20,16 +20,20 @@ public class ParkrunVolunteerService
 
     public ParkrunVolunteerService(HttpClient? httpClient = null, string? storeFilePath = null)
     {
-        _httpClient = httpClient ?? new HttpClient(new HttpClientHandler
+        // Only configure a self-built client; a caller-supplied (shared) client already has
+        // its headers set, and re-adding them here would duplicate them per service.
+        if (httpClient != null)
         {
-            AllowAutoRedirect = true
-        });
-
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-        _httpClient.DefaultRequestHeaders.Accept.ParseAdd(
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
-        _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+            _httpClient = httpClient;
+        }
+        else
+        {
+            _httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(ParkrunHttpClient.DefaultUserAgent);
+            _httpClient.DefaultRequestHeaders.Accept.ParseAdd(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+            _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+        }
 
         if (!string.IsNullOrEmpty(storeFilePath))
         {
@@ -324,6 +328,16 @@ public class ParkrunVolunteerService
         try
         {
             string html = await _httpClient.GetStringAsync(url);
+
+            // A seeded/earlier-obtained token for this host is applied automatically; if the
+            // page still comes back as a WAF challenge, try once to refresh the token and refetch.
+            if (ParkrunFetchHelper.LooksLikeWafChallenge(html) &&
+                Uri.TryCreate(url, UriKind.Absolute, out var profileUri) &&
+                ParkrunFetchHelper.TokenStore?.TryRefreshToken(profileUri.Host, url) == true)
+            {
+                html = await _httpClient.GetStringAsync(url);
+            }
+
             var doc = new HtmlDocument();
             doc.LoadHtml(html);
 
