@@ -97,7 +97,7 @@ public class WafTokenStore
     /// <summary>Overrides the User-Agent (e.g. from the <c>--user-agent</c> flag). Blank is ignored.</summary>
     public void SetUserAgent(string? ua)
     {
-        if (!string.IsNullOrWhiteSpace(ua)) UserAgent = ua.Trim();
+        if (!string.IsNullOrWhiteSpace(ua)) UserAgent = ua.Trim().Trim('"', '\'').Trim();
     }
 
     /// <summary>Seeds/overrides the token for a host (e.g. from a <c>--token host=value</c> flag).</summary>
@@ -142,26 +142,44 @@ public class WafTokenStore
             }
             lock (_gate) { _prompted.Add(host); } // ask at most once per host, whatever the outcome
 
+            bool needUserAgent = string.IsNullOrEmpty(UserAgent);
+
             Console.WriteLine();
             Console.WriteLine(new string('=', 78));
             Console.WriteLine($"parkrun's AWS WAF served a CAPTCHA for {host}.");
-            Console.WriteLine("To get past it:");
+            Console.WriteLine("Everything below must be done in a browser on THIS machine — the token is");
+            Console.WriteLine("bound to your IP and User-Agent, so a token solved elsewhere won't work.");
+            Console.WriteLine();
             Console.WriteLine("  1. Open this URL in a browser and solve the CAPTCHA until the page loads:");
             Console.WriteLine($"       {blockedUrl}");
-            Console.WriteLine("  2. In that tab's DevTools Console, copy the token to your clipboard:");
-            Console.WriteLine("       copy(document.cookie.split('; ').find(c => c.startsWith('aws-waf-token=')))");
-            Console.WriteLine("  The token is bound to your IP and User-Agent, so solve it on THIS machine.");
+            Console.WriteLine("  2. Open that tab's DevTools Console (Chrome: View > Developer > JavaScript");
+            Console.WriteLine("     Console, or press Cmd+Option+J / F12).");
+            if (needUserAgent)
+            {
+                Console.WriteLine("  3. Get the browser's User-Agent — run this and copy the printed string:");
+                Console.WriteLine("       navigator.userAgent");
+                Console.WriteLine("  4. Get the token — run this to copy it to your clipboard:");
+                Console.WriteLine("       copy(document.cookie.split('; ').find(c => c.startsWith('aws-waf-token=')))");
+            }
+            else
+            {
+                Console.WriteLine("  3. Get the token — run this to copy it to your clipboard:");
+                Console.WriteLine("       copy(document.cookie.split('; ').find(c => c.startsWith('aws-waf-token=')))");
+            }
+            Console.WriteLine();
+            Console.WriteLine("  Paste each value at the prompts below. Surrounding quotes are fine —");
+            Console.WriteLine("  they're stripped automatically.");
             Console.WriteLine(new string('=', 78));
 
-            if (string.IsNullOrEmpty(UserAgent))
+            if (needUserAgent)
             {
-                string? ua = PromptLine("Paste the User-Agent of that browser (blank to skip tokens): ");
+                string? ua = PromptLine("Paste the User-Agent (from navigator.userAgent; blank to skip tokens): ");
                 if (string.IsNullOrWhiteSpace(ua))
                 {
                     if (ua == null) lock (_gate) { _assumeUnattended = true; } // timed out
                     return false;
                 }
-                UserAgent = ua.Trim();
+                UserAgent = ua.Trim().Trim('"', '\'').Trim();
             }
 
             string? token = PromptLine($"Paste the aws-waf-token for {host} (blank to skip): ");
