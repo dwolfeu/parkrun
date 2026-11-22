@@ -217,6 +217,12 @@ class Program
 
             Console.WriteLine($"Milestones Achieved This Week:   {milestones.Count} members reached a milestone\n");
 
+            // Gender split (derived from age-group codes, now that records are enriched).
+            int femaleRunners = records.Count(r => ParkrunPdfGenerator.ClassifyGender(r.AgeGroup) == 'F');
+            int maleRunners = records.Count(r => ParkrunPdfGenerator.ClassifyGender(r.AgeGroup) == 'M');
+            int unclassifiedRunners = totalRunners - femaleRunners - maleRunners;
+            Console.WriteLine($"Gender Split:                    {femaleRunners} female | {maleRunners} male | {unclassifiedRunners} unclassified\n");
+
             var upcomingMilestones = milestoneService.GetUpcomingMilestones(records, effectiveDate);
             Console.WriteLine($"Upcoming Milestones Watch:       {upcomingMilestones.Count} members within 5 runs/credits of a milestone\n");
 

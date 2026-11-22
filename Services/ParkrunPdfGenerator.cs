@@ -35,6 +35,9 @@ public class ParkrunPdfGenerator
         string clubName = !string.IsNullOrEmpty(meta.ClubName) ? meta.ClubName : "Parkrun Club";
         string eventDate = !string.IsNullOrEmpty(meta.EventDate) ? meta.EventDate : DateTime.UtcNow.ToString("yyyy-MM-dd");
         int totalRunners = records.Count;
+        int femaleRunners = records.Count(r => ClassifyGender(r.AgeGroup) == 'F');
+        int maleRunners = records.Count(r => ClassifyGender(r.AgeGroup) == 'M');
+        int unclassifiedRunners = totalRunners - femaleRunners - maleRunners;
         int totalEvents = records.Select(r => r.EventName).Distinct().Count();
         int totalVolunteers = volunteerProfiles?.Count ?? 0;
 
@@ -97,15 +100,16 @@ public class ParkrunPdfGenerator
                     {
                         statRow.Spacing(8);
 
-                        // Card 1: Runners
-                        statRow.RelativeItem().Background(Colors.Indigo.Lighten5).Border(1).BorderColor(Colors.Indigo.Lighten3).Padding(5).Column(c =>
+                        // Card 1: Runners (wider to fit the gender split on one line)
+                        statRow.RelativeItem(1.6f).Background(Colors.Indigo.Lighten5).Border(1).BorderColor(Colors.Indigo.Lighten3).Padding(5).Column(c =>
                         {
                             c.Item().Text("Total Club Runners").FontSize(7.5f).FontColor(Colors.Indigo.Darken2).SemiBold();
                             c.Item().Text($"{totalRunners}").FontSize(13).Bold().FontColor(Colors.Indigo.Darken4);
+                            c.Item().Text($"({femaleRunners} female | {maleRunners} male | {unclassifiedRunners} unclassified)").FontSize(7.5f).FontColor(Colors.Indigo.Darken2);
                         });
 
-                        // Card 2: Events
-                        statRow.RelativeItem().Background(Colors.Teal.Lighten5).Border(1).BorderColor(Colors.Teal.Lighten3).Padding(5).Column(c =>
+                        // Card 2: Events (narrower to make room for the wider Runners card)
+                        statRow.RelativeItem(0.6f).Background(Colors.Teal.Lighten5).Border(1).BorderColor(Colors.Teal.Lighten3).Padding(5).Column(c =>
                         {
                             c.Item().Text("Events Attended").FontSize(7.5f).FontColor(Colors.Teal.Darken2).SemiBold();
                             c.Item().Text($"{totalEvents}").FontSize(13).Bold().FontColor(Colors.Teal.Darken4);
@@ -710,5 +714,38 @@ public class ParkrunPdfGenerator
         doc.GeneratePdf(fullPath);
 
         Console.WriteLine($"[Success] Successfully generated PDF report ({records.Count:N0} records) at: {fullPath}");
+    }
+
+    /// <summary>
+    /// Derives a runner's gender from their parkrun age-group code. parkrun doesn't expose gender
+    /// directly, but the age group encodes it: a single gender letter sits just before the age digits
+    /// (e.g. "SM30-34", "VW45-49", "JM10"), or leads a wheelchair code ("MWC"/"WWC").
+    /// English M=male / W=female, plus localised female codes (Dutch V=Vrouw, Polish K=Kobieta).
+    /// Returns 'M', 'F', or '\0' when the gender can't be determined (blank, header rows, unknown locales).
+    /// </summary>
+    public static char ClassifyGender(string? ageGroup)
+    {
+        if (string.IsNullOrWhiteSpace(ageGroup)) return '\0';
+
+        string ag = ageGroup.Trim().ToUpperInvariant();
+
+        // Gender letter = char immediately before the first digit; fall back to the first letter
+        // for digitless wheelchair codes (MWC, WWC).
+        int digitIndex = -1;
+        for (int i = 0; i < ag.Length; i++)
+        {
+            if (char.IsDigit(ag[i])) { digitIndex = i; break; }
+        }
+
+        char genderChar = digitIndex > 0 ? ag[digitIndex - 1] : ag[0];
+
+        return genderChar switch
+        {
+            'M' => 'M',                 // English/German/Dutch/Polish male
+            'W' => 'F',                 // English/German female (Woman/weiblich)
+            'V' => 'F',                 // Dutch female (Vrouw)
+            'K' => 'F',                 // Polish female (Kobieta)
+            _ => '\0'                   // headers, blanks, unmapped locales
+        };
     }
 }
